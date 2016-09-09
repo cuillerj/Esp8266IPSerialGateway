@@ -1,52 +1,61 @@
 /* This code run on ESP8266 chip
- *  It makes ESP8266 acting as Serial / UDP gateway
- *  It allows to route up to 30 bytes
- *  Is transfers any 2 consecutive bytes binary data 
- *  Only those 3 consecutive bytes "0x7f7f7f & 0x7f7e7f" are forbiden 
- *  There no need to modify the code to fit your need
- *  Configuration has to be done with a FTI (serial/USB) connection (3.3volts) (19200 b/s both NL&CR)
- *  Paramters are stored inside eeprom
- *  2 default services are defined
- *  It listens on specific udp port (udpListenPort) and can receive Udp data from any IP server  
- *  By default it sends date to one specific IP address 
- *  service "route" that route from a specific udp port (udpListenPort) to the serial link and from the serial link to a specific udp port (routePort)
- *  service "trace" that route  from the serial link to a specific udp port (tracePort) mainly used for debuging
- *  4 GPIO are used in output mode (3 LED 1 signal)
- *  2 GPIO are used in input mode (1 for set in debug mode, 1 for set in configuration mode) - take care to the 3.3v limitation !!
+    It makes ESP8266 acting as Serial / UDP gateway
+    It allows to route up to 30 bytes
+    Is transfers any 2 consecutive bytes binary data
+    Only those 3 consecutive bytes "0x7f7f7f & 0x7f7e7f" are forbiden
+    There no need to modify the code to fit your need
+    Configuration has to be done with a FTI (serial/USB) connection (3.3volts) (19200 b/s both NL&CR)
+    Paramters are stored inside eeprom
+    2 default services are defined
+    It listens on specific udp port (udpListenPort) and can receive Udp data from any IP server
+    By default it sends date to one specific IP address
+    service "route" that route from a specific udp port (udpListenPort) to the serial link and from the serial link to a specific udp port (routePort)
+    service "trace" that route  from the serial link to a specific udp port (tracePort) mainly used for debuging
+    4 GPIO are used in output mode (3 LED 1 signal)
+    2 GPIO are used in input mode (1 for set in debug mode, 1 for set in configuration mode) - take care to the 3.3v limitation !!
 */
-//#define debugModeOn               // uncomment to debug the code
+//#define debugModeOn               // uncomment this define to debug the code
 
+#include <ESP8266WiFi.h>
+#include <WiFiUdp.h>
+#include <EEPROM.h>
+
+#define defaultSerialSpeed 38400   // the default speed of the gateway
+
+/* *** Define look for string environment
+
+*/
 #include <LookForString.h>        // used to look for string inside commands and parameters
 #define parametersNumber 19       // must fit with the paramList
-#define commandnumber 29          // must fit with the commandList
+#define commandnumber 30          // must fit with the commandList
 
 /* *** commands list definition
- *  Define all the command's names 
- *  Ended by "=" means this command will set the parameter of the seame name 
+    Define all the command's names
+    Ended by "=" means this command will set the parameter of the seame name
 */
 String commandList[commandnumber] = {"SSID1=", "PSW1=", "SSID2=", "PSW2=", "ShowWifi", "Restart", "DebugOn", "DebugOff", "ScanWifi", "SSID=0", "SSID=1", "SSID=2", "ShowEeprom", "EraseEeprom",
-                                     "routePort=", "tracePort=", "IP1=", "IP2=", "IP3=", "IP4=", "stAddr=", "SSpeed=", "cnxLED=", "serialLED=", "pwrLED=", "confPin=", "debugPin=", "readyPin=", "udpListenPort="
+                                     "routePort=", "tracePort=", "IP1=", "IP2=", "IP3=", "IP4=", "stAddr=", "SSpeed=", "cnxLED=", "serialLED=", "pwrLED=", "confPin=", "debugPin=", "readyPin=", "listenPort=", ""
                                     };
 
 /* *** paramters list definition
- *  Define all the parameter's names 
- *  Parameters that can be set to value must have a name that fit with the commandList (without "=")
+    Define all the parameter's names
+    Parameters that can be set to value must have a name that fit with the commandList (without "=")
 */
 String paramList[parametersNumber] = {"stAddr", "SSpeed", "cnxLED", "serialLED", "pwrLED", "confPin", "debugPin", "readyPin" , "SSID1", "PSW1", "SSID2", "PSW2",
-                                      "routePort", "tracePort", "udpListenPort", "IP1", "IP2", "IP3", "IP4"
+                                      "routePort", "tracePort", "listenPort", "IP1", "IP2", "IP3", "IP4"
                                      };
- /*                                  
-  *  define the exact number of characters that define the parameter's values                                 
-  */
+/*
+    define the exact number of characters that define the parameter's values
+*/
 unsigned int paramLength[parametersNumber] =  {2, 5, 2, 2, 2, 2, 1, 1, 50, 50, 50, 50, 4, 4, 4, 3, 3, 3, 3};
 /*
- * define the type of parameters 0x00 means String, 0x01 means number to be stored with one byte (<256), 0x02 means means number to be stored with two byte (< 65535)      
- */
-uint8_t paramType[parametersNumber] =         {0x01, 0x02, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x02, 0x01, 0x01, 0x01, 0x01}; 
+   define the type of parameters 0x00 means String, 0x01 means number to be stored with one byte (<256), 0x02 means means number to be stored with two byte (< 65 535),  0x03 means means number to be stored with two byte (< 16 777 216)
+*/
+uint8_t paramType[parametersNumber] =         {0x01, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x03, 0x01, 0x01, 0x01, 0x01};
 /*
- * define the default paramter's values that will be used before configuration
- * The number of caracters must fit with the parameter length
- */
+   define the default paramter's values that will be used before configuration
+   The number of caracters must fit with the parameter length
+*/
 byte paramValue[parametersNumber][50] =       {"01", "19200", "14", "12", "13", "15", "4", "5", "yourfirstssid", "yourfirstpsw", "yoursecondssid", "yoursecondpass", "1830", "1831", "8888", "192", "168", "001", "005"};
 String *PparamList[parametersNumber];  // pointera array (to each paramter)
 String *PcommandList[commandnumber];   // pointera array (to each command)
@@ -57,7 +66,7 @@ LookForStr SerialInput(PcommandList, commandnumber);   // define object that loo
 
 /*
  * *** *** define the Eeprom management tools
- */
+*/
 #include <ManageParamEeprom.h>              // include the code 
 #define ramOffset 0                         // define the eeprom starting position (default 0 - can be change for other software compatibilty reason)
 #define forceErase false                    // set to true in case of major issue with the eeprom tool
@@ -65,8 +74,8 @@ char keyword[] = "AzErTy";                  // must contain 6 charasters  - this
 ManageParamEeprom storedParam (parametersNumber, ramOffset, keyword);
 
 /*
- * 
- */
+
+*/
 int configPin = 15;  // set to config mode when set to 3.3v - running mode when set to ground
 int debugPin = 4; // Switch of udp trace when grounded  On when set to 3.3v
 int readyPin = 5;  // relay off if wifi connection not established
@@ -74,7 +83,7 @@ int serialLED = 12;
 int powerLED = 13;
 int connectionLED = 14;
 int stAddr = 0;
-int SSpeed = 19200;
+int SSpeed = defaultSerialSpeed;
 int routePort = 1830;
 int tracePort = 1831;
 byte serverIP[4] = {0xc0, 0xa8, 0x01, 0x05};  //
@@ -91,7 +100,7 @@ uint8_t IP4 = 0x00;
 #define bitDiagIP 1
 #define maxSSIDLength 50
 #define maxPSWLength 50
-#define defaultSerialSpeed 19200
+
 //#define debug_PIN 14 // switch of udp trace when grounded
 //#define led_PIN 15  // off if wifi connection not established
 char ssid1[maxSSIDLength] = "";       // first SSID  will be used at first
@@ -108,9 +117,6 @@ boolean connectionStatus = false;
 boolean serialFirstCall = true;
 String ver = "IPSerialGateway";
 uint8_t vers = 0x01;
-#include <ESP8266WiFi.h>
-#include <WiFiUdp.h>
-#include <EEPROM.h>
 uint8_t addrStation[4] = {0x00, 0x00, 0x04, 0x03}; // 2 1er octets reserves commence ensuite 1024 0x04 0x00
 uint8_t typeStation[4] = {0x00, 0x00, 0x04, 0x01};
 String Srequest = "                                                                                                                                                                                                                                                                                                                     ";
@@ -154,7 +160,7 @@ int id;
 WiFiUDP Udp;
 
 void setup() {
-  Serial.begin(SSpeed);
+  Serial.begin(defaultSerialSpeed);
   delay(1000);
 #if defined(debugModeOn)
   Serial.println("start");
@@ -184,16 +190,16 @@ void setup() {
     Serial.println(SSpeed);
 #endif
     delay(200);
-    //    Serial.end();
+    Serial.end();
     delay(500);
-    //    Serial.begin(SSpeed);
+    Serial.begin(SSpeed);
     delay(1000);
   }
 
   udpPort[0] = routePort; //
   udpPort[1] = tracePort; //
   timeRestart = millis();
-  
+
   ConnectWifi("default", "default");
   WiFi.mode(WIFI_STA);
 
@@ -225,6 +231,7 @@ void loop() {
         Serial.print("Ready to use ! ");
         PrintUdpConfig();
       }
+      AffLed();
       digitalWrite(readyPin, true);
     }
     else
@@ -413,16 +420,16 @@ void TraceToUdp(String req, uint8_t code)
 }
 void RouteToUdp(int len)
 {
-  dataBin[0] = bufParam[0];
+  dataBin[0] = bufParam[0]; // station address
   dataBin[1] = 0x3B;
-  dataBin[2] = 0x64;
+  /// dataBin[2] = 0x64;
+  dataBin[2] = bufParam[2];
   dataBin[3] = 0x3B;
   dataBin[4] = uint8(len);  //len
   dataBin[5] = 0x3B;
   if (len > sizeDataBin - 6)
   {
     len = sizeDataBin - 6;
-
   }
   for (int i = 0; i < len; i++)
   {
@@ -941,16 +948,26 @@ void setInitialParam(int number)
     Serial.print(" 0x02 rc: ");
     Serial.println(storedParam.SetParameter(number, 2, byteToStore));
   }
+  if (paramType[idxArray] == 0x03 )
+  {
+    unsigned int value = ExtractNumericValue(idxArray) ;
+    uint8_t byteToStore[3];
+    byteToStore[2] = uint8_t(value) ;
+    byteToStore[1] = uint8_t(value / 256) ;
+    byteToStore[0] = uint8_t(value / (256 * 256)) ;
+    Serial.print(" 0x03 rc: ");
+    Serial.println(storedParam.SetParameter(number, 3, byteToStore));
+  }
 }
 
 unsigned int  ExtractNumericValue(uint8_t idxArray)
 {
-  uint8_t  byteToStore[2];
+  uint8_t  byteToStore[3];
 
   unsigned long val = 0;
   for (int i = 0; i < paramLength[idxArray]; i++)
   {
-    if (paramType[idxArray] == 0x01 || paramType[idxArray] == 0x02)
+    if (paramType[idxArray] == 0x01 || paramType[idxArray] == 0x02 || paramType[idxArray] == 0x03)
     {
       unsigned int idx = uint8_t(paramValue[idxArray][i]) - 0x30;
       unsigned int degre = paramLength[idxArray] - i - 1;
@@ -966,10 +983,16 @@ unsigned int  ExtractNumericValue(uint8_t idxArray)
       byteToStore[0] = uint8_t(val ) ;
 
     }
-    if (paramType[idxArray] == 0x01)
+    if (paramType[idxArray] == 0x02)
     {
       byteToStore[1] = uint8_t(val) ;
       byteToStore[0] = uint8_t(val / 256) ;
+    }
+    if (paramType[idxArray] == 0x03)
+    {
+      byteToStore[2] = uint8_t(val) ;
+      byteToStore[1] = uint8_t(val / 256) ;
+      byteToStore[0] = uint8_t(val / (256 * 256)) ;
     }
   }
   return (val);
@@ -1000,7 +1023,7 @@ void ShowEeeprom()
     int cmdIdx = rc.idxCommand;
     if (cmdIdx != -1)
     {
-      if (paramType[i] == 0x01 || paramType[i] == 0x02)
+      if (paramType[i] == 0x01 || paramType[i] == 0x02 || paramType[i] == 0x03 )
       {
         numericParameter numericRC = storedParam.GetNumericParameter(cmdIdx);
         Serial.println(numericRC.parameterNumericValue);
@@ -1026,6 +1049,7 @@ void UpdateEepromParameter(uint8_t cmdIdx, String Srequest, int cmdPos)
   Sparam = Sparam.substring(0, sizeof(Sparam) - 1); // remove last char " = "
   String  Svalue = Srequest;                       // get command value
   Svalue = Svalue.substring(cmdPos);              //
+//  int valueLen = sizeof(Svalue);
   char Cvalue[maxParameterLen + 50];
   Svalue.toCharArray(Cvalue, sizeof(Svalue));
 
@@ -1033,7 +1057,7 @@ void UpdateEepromParameter(uint8_t cmdIdx, String Srequest, int cmdPos)
   int paramIdx = rc.idxCommand;
   // int paramPos = rc.idxPos;
 
-  if (cmdIdx != -1)
+  if (paramIdx != -1)
   {
     int idxArray = paramIdx ;
     Serial.print(" set parameter : ");
@@ -1071,6 +1095,20 @@ void UpdateEepromParameter(uint8_t cmdIdx, String Srequest, int cmdPos)
       byteToStore[0] = uint8_t(value / 256) ;
       Serial.print(" 0x02 rc: ");
       Serial.println(storedParam.SetParameter(idxArray, 2, byteToStore));
+    }
+    if (paramType[idxArray] == 0x03 )
+    {
+      int value = atoi(Cvalue) ;
+#if defined(debugModeOn)
+      Serial.print("atoi: ");
+      Serial.println(value);
+#endif
+      uint8_t byteToStore[3];
+      byteToStore[2] = uint8_t(value) ;
+      byteToStore[1] = uint8_t(value / 256) ;
+      byteToStore[0] = uint8_t(value / (256 * 256)) ;
+      Serial.print(" 0x03 rc: ");
+      Serial.println(storedParam.SetParameter(idxArray, 3, byteToStore));
     }
   }
 }
@@ -1314,7 +1352,7 @@ void LoadEerpromParamters()
     tracePort = numericRC.parameterNumericValue;
   }
 
-  Srequest = "udpListenPort";
+  Srequest = "listenPort";
 #if defined(debugModeOn)
   Serial.print(Srequest);
   Serial.print(": ");
