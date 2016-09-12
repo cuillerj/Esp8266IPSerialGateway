@@ -1,13 +1,13 @@
 /*
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+  NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+  LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+  OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-Written by Jean Cuiller
+  Written by Jean Cuiller
 */
 /* This code run on ESP8266 chip
     It makes ESP8266 acting as Serial / UDP gateway
@@ -58,16 +58,16 @@ String paramList[parametersNumber] = {"stAddr", "SSpeed", "cnxLED", "serialLED",
 /*
     define the exact number of characters that define the parameter's values
 */
-unsigned int paramLength[parametersNumber] =  {2, 5, 2, 2, 2, 2, 1, 1, 50, 50, 50, 50, 4, 4, 4, 3, 3, 3, 3};
+unsigned int paramLength[parametersNumber] =  {4, 5, 2, 2, 2, 2, 2, 2, 50, 50, 50, 50, 4, 4, 4, 3, 3, 3, 3};
 /*
    define the type of parameters 0x00 means String, 0x01 means number to be stored with one byte (<256), 0x02 means means number to be stored with two byte (< 65 535),  0x03 means means number to be stored with two byte (< 16 777 216)
 */
-uint8_t paramType[parametersNumber] =         {0x01, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x03, 0x01, 0x01, 0x01, 0x01};
+uint8_t paramType[parametersNumber] =         {0x02, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x03, 0x01, 0x01, 0x01, 0x01};
 /*
    define the default paramter's values that will be used before configuration
    The number of caracters must fit with the parameter length
 */
-byte paramValue[parametersNumber][50] =       {"01", "19200", "14", "12", "13", "15", "4", "5", "yourfirstssid", "yourfirstpsw", "yoursecondssid", "yoursecondpass", "1830", "1831", "8888", "192", "168", "001", "005"};
+byte paramValue[parametersNumber][50] =       {"0001", "38400", "14", "12", "13", "02", "04", "05", "yourfirstssid", "yourfirstpsw", "yoursecondssid", "yoursecondpass", "1830", "1831", "8888", "192", "168", "001", "005"};
 String *PparamList[parametersNumber];  // pointera array (to each paramter)
 String *PcommandList[commandnumber];   // pointera array (to each command)
 
@@ -87,7 +87,7 @@ ManageParamEeprom storedParam (parametersNumber, ramOffset, keyword);
 /*
 
 */
-int configPin = 15;  // set to config mode when set to 3.3v - running mode when set to ground
+int configPin = 2;  // set to config mode when set to 3.3v - running mode when set to ground
 int debugPin = 4; // Switch of udp trace when grounded  On when set to 3.3v
 int readyPin = 5;  // relay off if wifi connection not established
 int serialLED = 12;
@@ -592,6 +592,10 @@ int Serial_have_message() {
       commandReturn rc = SerialInput.GetCommand(Srequest); // look for commant inside the input
       int cmdIdx = rc.idxCommand;
       int cmdPos = rc.idxPos;
+#if defined(debugModeOn)
+Serial.print("idxCommand:");
+Serial.println(cmdIdx);
+#endif
       if (cmdIdx >= 0)
       {
         switch (cmdIdx) {
@@ -780,7 +784,6 @@ int Serial_have_message() {
             }
         }
       }
-
       else
       {
         Serial.println("Serial must be set NL & CR ");
@@ -791,6 +794,7 @@ int Serial_have_message() {
           Serial.print(" ");
         }
         Serial.println("");
+        delay(500);
       }
       return (0);
     }
@@ -1060,7 +1064,7 @@ void UpdateEepromParameter(uint8_t cmdIdx, String Srequest, int cmdPos)
   Sparam = Sparam.substring(0, sizeof(Sparam) - 1); // remove last char " = "
   String  Svalue = Srequest;                       // get command value
   Svalue = Svalue.substring(cmdPos);              //
-//  int valueLen = sizeof(Svalue);
+  //  int valueLen = sizeof(Svalue);
   char Cvalue[maxParameterLen + 50];
   Svalue.toCharArray(Cvalue, sizeof(Svalue));
 
@@ -1206,7 +1210,7 @@ void LoadEerpromParamters()
     powerLED = numericRC.parameterNumericValue;
   }
 
-  Srequest = "configPin";
+  Srequest = "confPin";
 #if defined(debugModeOn)
   Serial.print(Srequest);
   Serial.print(": ");
