@@ -593,8 +593,8 @@ int Serial_have_message() {
       int cmdIdx = rc.idxCommand;
       int cmdPos = rc.idxPos;
 #if defined(debugModeOn)
-Serial.print("idxCommand:");
-Serial.println(cmdIdx);
+      Serial.print("idxCommand:");
+      Serial.println(cmdIdx);
 #endif
       if (cmdIdx >= 0)
       {
