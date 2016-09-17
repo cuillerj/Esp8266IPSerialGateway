@@ -25,7 +25,7 @@
     4 GPIO are used in output mode (3 LED 1 signal)
     2 GPIO are used in input mode (1 for set in debug mode, 1 for set in configuration mode) - take care to the 3.3v limitation !!
 */
-//#define debugModeOn               // uncomment this define to debug the code
+// #define debugModeOn               // uncomment this define to debug the code
 
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
@@ -67,7 +67,7 @@ uint8_t paramType[parametersNumber] =         {0x02, 0x03, 0x01, 0x01, 0x01, 0x0
    define the default paramter's values that will be used before configuration
    The number of caracters must fit with the parameter length
 */
-byte paramValue[parametersNumber][50] =       {"0001", "38400", "14", "12", "13", "02", "04", "05", "yourfirstssid", "yourfirstpsw", "yoursecondssid", "yoursecondpass", "1830", "1831", "8888", "192", "168", "001", "005"};
+byte paramValue[parametersNumber][50] =       {"0001", "38400", "14", "12", "13", "04", "02", "05", "yourfirstssid", "yourfirstpsw", "yoursecondssid", "yoursecondpass", "1830", "1831", "8888", "192", "168", "001", "005"};
 String *PparamList[parametersNumber];  // pointera array (to each paramter)
 String *PcommandList[commandnumber];   // pointera array (to each command)
 
@@ -87,8 +87,8 @@ ManageParamEeprom storedParam (parametersNumber, ramOffset, keyword);
 /*
 
 */
-int configPin = 2;  // set to config mode when set to 3.3v - running mode when set to ground
-int debugPin = 4; // Switch of udp trace when grounded  On when set to 3.3v
+int configPin = 4;  // set to config mode when set to 3.3v - running mode when set to ground
+int debugPin = 2; // Switch of udp trace when grounded  On when set to 3.3v
 int readyPin = 5;  // relay off if wifi connection not established
 int serialLED = 12;
 int powerLED = 13;
@@ -182,7 +182,7 @@ void setup() {
   Serial.print("eeprom version: ");
   Serial.println(paramVersion, HEX);
 #endif
-  if (paramVersion == 0xff )
+  if (paramVersion == 0xff || forceErase == true )
   {
     Serial.println("init eeprom: ");
     storedParam.Init();
@@ -225,7 +225,7 @@ void setup() {
   digitalWrite(serialLED, false);
   pinMode(readyPin, OUTPUT);
   // pinMode(led_PIN, OUTPUT);
-  pinMode(configPin, INPUT_PULLUP);
+  pinMode(configPin, INPUT);
   //  digitalWrite(led_PIN, true);
   pinMode(debugPin, INPUT_PULLUP);
 }
@@ -407,7 +407,7 @@ void SendToUdp( int mlen, int serviceId) {
 }
 void TraceToUdp(String req, uint8_t code)
 {
-  if ( digitalRead(debugPin) != 0)
+  if ( digitalRead(debugPin) == 0)
   {
     int len = req.length() + 5;
     dataBin[0] = uint8_t(id / 256); // addrSSerial
