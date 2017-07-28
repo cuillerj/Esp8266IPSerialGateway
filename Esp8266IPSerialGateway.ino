@@ -1,4 +1,9 @@
 /*
+    release notes version 2.1
+    GPIO rnot longer used for activate udp trace due to some stability issue
+    Trace to be activated by compile switch
+*/
+/*
   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -26,7 +31,8 @@
     2 GPIO are used in input mode (1 for set in debug mode, 1 for set in configuration mode) - take care to the 3.3v limitation !!
 */
 // #define debugModeOn               // uncomment this define to debug the code
-
+// #define traceOn               // uncomment to send udp trace
+#define versionID "2.1"
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <EEPROM.h>
@@ -88,7 +94,7 @@ ManageParamEeprom storedParam (parametersNumber, ramOffset, keyword);
 
 */
 int configPin = 4;  // set to config mode when set to 3.3v - running mode when set to ground
-int debugPin = 2; // Switch of udp trace when grounded  On when set to 3.3v
+int debugPin = 2; // Switch of udp trace when grounded  On when set to 3.3v - no longer used
 int readyPin = 5;  // relay off if wifi connection not established
 int serialLED = 12;
 int powerLED = 13;
@@ -176,6 +182,8 @@ void setup() {
 #if defined(debugModeOn)
   Serial.println("start");
 #endif
+
+  delay(1000);
   InitLookForList();
   uint8_t paramVersion = storedParam.GetVersion();
 #if defined(debugModeOn)
@@ -227,7 +235,7 @@ void setup() {
   // pinMode(led_PIN, OUTPUT);
   pinMode(configPin, INPUT);
   //  digitalWrite(led_PIN, true);
-  pinMode(debugPin, INPUT_PULLUP);
+  //  pinMode(debugPin, INPUT_PULLUP);
 }
 
 void loop() {
@@ -327,6 +335,9 @@ void ConnectWifi(char *ssid, char *pass)
   }
   if (digitalRead(configPin) == true)
   {
+    Serial.println();
+    Serial.print("gateway version:");
+    Serial.println(versionID);
     Serial.print("\n Please wait... Connecting to "); Serial.println(ssid);
   }
   uint8_t i = 0;
@@ -407,7 +418,8 @@ void SendToUdp( int mlen, int serviceId) {
 }
 void TraceToUdp(String req, uint8_t code)
 {
-  if ( digitalRead(debugPin) == 0)
+#if traceOn
+  //  if ( digitalRead(debugPin) == 0)
   {
     int len = req.length() + 5;
     dataBin[0] = uint8_t(id / 256); // addrSSerial
@@ -428,6 +440,7 @@ void TraceToUdp(String req, uint8_t code)
     }
     SendToUdp(len, 1);
   }
+#endif
 }
 void RouteToUdp(int len)
 {
