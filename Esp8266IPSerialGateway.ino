@@ -31,7 +31,7 @@
     2 GPIO are used in input mode (1 for set in debug mode, 1 for set in configuration mode) - take care to the 3.3v limitation !!
 */
 // #define debugModeOn               // uncomment this define to debug the code
-// #define traceOn               // uncomment to send udp trace
+//#define traceOn               // uncomment to send udp trace
 #define versionID "2.1"
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
@@ -418,7 +418,7 @@ void SendToUdp( int mlen, int serviceId) {
 }
 void TraceToUdp(String req, uint8_t code)
 {
-#if traceOn
+#if defined(traceOn)
   //  if ( digitalRead(debugPin) == 0)
   {
     int len = req.length() + 5;
