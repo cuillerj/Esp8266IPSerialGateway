@@ -17,7 +17,7 @@
 /* This code run on ESP8266 chip
     It makes ESP8266 acting as Serial / UDP gateway
     It allows to route up to 30 bytes
-    Is transfers any 2 consecutive bytes binary data
+    It transfers any 2 consecutive bytes binary data
     Only those 3 consecutive bytes "0x7f7f7f & 0x7f7e7f" are forbiden
     There no need to modify the code to fit your need
     Configuration has to be done with a FTI (serial/USB) connection (3.3volts) (19200 b/s both NL&CR)
