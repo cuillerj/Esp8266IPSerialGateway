@@ -2,6 +2,8 @@
     release notes version 2.1
     GPIO rnot longer used for activate udp trace due to some stability issue
     Trace to be activated by compile switch
+    release notes version 2.2
+    ShowWifi print IP ports   
 */
 /*
   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
@@ -30,9 +32,9 @@
     4 GPIO are used in output mode (3 LED 1 signal)
     2 GPIO are used in input mode (1 for set in debug mode, 1 for set in configuration mode) - take care to the 3.3v limitation !!
 */
-// #define debugModeOn               // uncomment this define to debug the code
+//#define debugModeOn               // uncomment this define to debug the code
 //#define traceOn               // uncomment to send udp trace
-#define versionID "2.1"
+#define versionID "2.2"
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <EEPROM.h>
@@ -294,7 +296,9 @@ void loop() {
     }
     if (connectionStatus == 1 && (CheckCurrentIP() && wifiStatus) == 0)
     {
+#if defined debugModeOn
       Serial.println("connection lost");
+#endif
       digitalWrite(readyPin, false);
     }
     connectionStatus = CheckCurrentIP() && wifiStatus;
@@ -735,6 +739,12 @@ int Serial_have_message() {
             {
               WiFi.printDiag(Serial);
               Serial.println(WiFi.localIP());
+              Serial.print("ports:");
+              Serial.print(routePort);
+              Serial.print(" ");
+              Serial.print(tracePort);
+              Serial.print(" ");
+              Serial.println(udpListenPort);
               break;
             }
           case 5:     // Restart
