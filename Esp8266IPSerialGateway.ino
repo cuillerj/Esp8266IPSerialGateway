@@ -2,8 +2,20 @@
     release notes version 2.1
     GPIO rnot longer used for activate udp trace due to some stability issue
     Trace to be activated by compile switch
+
     release notes version 2.2
-    ShowWifi print IP ports   
+    ShowWifi print IP ports
+
+    release notes version 2.3
+    regurarly send status frame
+
+    release notes version 2.5
+    listen 2 UDP ports - one UDPG dedicated to receive gateway commands (used to dynamicaly modify server IP addrress and port 
+      and to switch between SSID according to indicator value sotred n dtabase)
+    automatic switch between 2 wifi in case of issue
+    
+
+
 */
 /*
   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
@@ -34,7 +46,7 @@
 */
 //#define debugModeOn               // uncomment this define to debug the code
 //#define traceOn               // uncomment to send udp trace
-#define versionID "2.2"
+#define versionID 25
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <EEPROM.h>
@@ -45,15 +57,16 @@
 
 */
 #include <LookForString.h>        // used to look for string inside commands and parameters
-#define parametersNumber 19       // must fit with the paramList
-#define commandnumber 30          // must fit with the commandList
+#include <HomeAutomationBytesCommands.h>
+#define parametersNumber 20       // must fit with the paramList
+#define commandnumber 31          // must fit with the commandList
 
 /* *** commands list definition
     Define all the command's names
     Ended by "=" means this command will set the parameter of the seame name
 */
 String commandList[commandnumber] = {"SSID1=", "PSW1=", "SSID2=", "PSW2=", "ShowWifi", "Restart", "DebugOn", "DebugOff", "ScanWifi", "SSID=0", "SSID=1", "SSID=2", "ShowEeprom", "EraseEeprom",
-                                     "routePort=", "tracePort=", "IP1=", "IP2=", "IP3=", "IP4=", "stAddr=", "SSpeed=", "cnxLED=", "serialLED=", "pwrLED=", "confPin=", "debugPin=", "readyPin=", "listenPort=", ""
+                                     "routePort=", "tracePort=", "IP1=", "IP2=", "IP3=", "IP4=", "stAddr=", "SSpeed=", "cnxLED=", "serialLED=", "pwrLED=", "confPin=", "debugPin=", "readyPin=", "listenPort=", "gatewayPort=" ""
                                     };
 
 /* *** paramters list definition
@@ -61,21 +74,21 @@ String commandList[commandnumber] = {"SSID1=", "PSW1=", "SSID2=", "PSW2=", "Show
     Parameters that can be set to value must have a name that fit with the commandList (without "=")
 */
 String paramList[parametersNumber] = {"stAddr", "SSpeed", "cnxLED", "serialLED", "pwrLED", "confPin", "debugPin", "readyPin" , "SSID1", "PSW1", "SSID2", "PSW2",
-                                      "routePort", "tracePort", "listenPort", "IP1", "IP2", "IP3", "IP4"
+                                      "routePort", "tracePort", "listenPort", "IP1", "IP2", "IP3", "IP4", "gatewayPort"
                                      };
 /*
     define the exact number of characters that define the parameter's values
 */
-unsigned int paramLength[parametersNumber] =  {4, 5, 2, 2, 2, 2, 2, 2, 50, 50, 50, 50, 4, 4, 4, 3, 3, 3, 3};
+unsigned int paramLength[parametersNumber] =  {4, 5, 2, 2, 2, 2, 2, 2, 50, 50, 50, 50, 4, 4, 4, 3, 3, 3, 3, 4};
 /*
    define the type of parameters 0x00 means String, 0x01 means number to be stored with one byte (<256), 0x02 means means number to be stored with two byte (< 65 535),  0x03 means means number to be stored with two byte (< 16 777 216)
 */
-uint8_t paramType[parametersNumber] =         {0x02, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x03, 0x01, 0x01, 0x01, 0x01};
+uint8_t paramType[parametersNumber] =         {0x02, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x03, 0x01, 0x01, 0x01, 0x01, 0x03};
 /*
    define the default paramter's values that will be used before configuration
    The number of caracters must fit with the parameter length
 */
-byte paramValue[parametersNumber][50] =       {"0001", "38400", "14", "12", "13", "04", "02", "05", "yourfirstssid", "yourfirstpsw", "yoursecondssid", "yoursecondpass", "1830", "1831", "8888", "192", "168", "001", "005"};
+byte paramValue[parametersNumber][50] =       {"1286", "38400", "14", "12", "13", "04", "02", "05", "yourfirstssid", "yourfirstpsw", "yoursecondssid", "yoursecondpass", "1901", "1902", "8888", "192", "168", "001", "005", "8889"};
 String *PparamList[parametersNumber];  // pointera array (to each paramter)
 String *PcommandList[commandnumber];   // pointera array (to each command)
 
@@ -103,20 +116,22 @@ int powerLED = 13;
 int connectionLED = 14;
 int stAddr = 0;
 int SSpeed = defaultSerialSpeed;
-int routePort = 1830;
-int tracePort = 1831;
+int routePort = 1901;
+int tracePort = 1902;
 byte serverIP[4] = {0xc0, 0xa8, 0x01, 0x05};  //
+IPAddress remoteAddr ;
 int udpListenPort = 8888;
+int gatewayPort = 8889;
 uint8_t IP1 = 0x00;
 uint8_t IP2 = 0x00;
 uint8_t IP3 = 0x00;
 uint8_t IP4 = 0x00;
-#define diagWifiConnection 0
-#define diagIPAddress 1
-#define diagMemory 2
-#define nbUdpPort 2
+uint8_t frameNumber = 0x00;
 #define bitDiagWifi 0
 #define bitDiagIP 1
+#define diagMemory 2
+
+#define nbUdpPort 2
 #define maxSSIDLength 50
 #define maxPSWLength 50
 
@@ -127,18 +142,16 @@ char pass1[maxPSWLength] = "";      // first pass
 char ssid2[maxSSIDLength] = "";        // second SSID will be used in case on connection failure with the first ssid
 char pass2[maxPSWLength] = "";  // second pass
 
-boolean connectionLEDOn = false;
-boolean powerLEDOn = false;
 boolean debugMode = false;
-boolean serialLEDOn = false;
 boolean restartCompleted = false;
-boolean connectionStatus = false;
+boolean connectedStatus = false;
 boolean serialFirstCall = true;
 String ver = "IPSerialGateway";
 uint8_t vers = 0x01;
 uint8_t addrStation[4] = {0x00, 0x00, 0x04, 0x03}; // 2 1er octets reserves commence ensuite 1024 0x04 0x00
 uint8_t typeStation[4] = {0x00, 0x00, 0x04, 0x01};
-String Srequest = "                                                                                                                                                                                                                                                                                                                     ";
+//String Srequest = "                                                                                                                                                                                                                                                                                                                     ";
+String Srequest;
 uint8_t addrStationLen = sizeof(addrStation);
 uint8_t typeStationLen = sizeof(typeStation);
 int udpPort[nbUdpPort];
@@ -146,6 +159,7 @@ String services[] = {"Route", "Trace"};
 char packetBuffer[UDP_TX_PACKET_MAX_SIZE]; //buffer to hold incoming packet,
 byte bufUdp[255];
 uint8_t currentSSID = 0x00;         // current used SSID
+uint8_t retryWifi = 0x00;         //
 char stationId[5];
 
 
@@ -165,18 +179,25 @@ IPAddress nullIP = {0, 0, 0, 0};
 //
 // timers
 unsigned long timeSerial = 0;
-unsigned long timeMemory = 0;
+unsigned long timeCheck = 0;
 unsigned long timeAffLED = 0;
 unsigned long timeUdp = 0;
 unsigned long timeLastSentUdp = 0;
 unsigned long timeCheckWifi = 0;
 unsigned long timeRestart = 0;
+unsigned long timeUpdateStatus = 0;
+unsigned long diagTime = 0;
+#define updateStatusCycle 300000
+#define diagTimeCycle 120000
 // internal data
-uint8_t  diagByte = 0x03; // (,,,,,IP,Wifi)
+#define WifidiagBit 0
+#define IPdiagBit 1
+uint8_t  diagByte = WifidiagBit | IPdiagBit;
 //uint8_t SavDiag = Diag;
 unsigned int freeMemory = 0;
 int id;
 WiFiUDP Udp;
+WiFiUDP UdpG;
 
 void setup() {
   Serial.begin(defaultSerialSpeed);
@@ -184,8 +205,15 @@ void setup() {
 #if defined(debugModeOn)
   Serial.println("start");
 #endif
-
   delay(1000);
+  pinMode(powerLED, OUTPUT);
+  digitalWrite(powerLED, 1);
+  pinMode(connectionLED, OUTPUT);
+  digitalWrite(connectionLED, 1);
+  pinMode(serialLED, OUTPUT);
+  digitalWrite(serialLED, 1);
+  pinMode(readyPin, OUTPUT);
+  Srequest.reserve(60);
   InitLookForList();
   uint8_t paramVersion = storedParam.GetVersion();
 #if defined(debugModeOn)
@@ -225,24 +253,20 @@ void setup() {
   WiFi.mode(WIFI_STA);
 
   Udp.begin(udpListenPort);
+  UdpG.begin(gatewayPort);
   delay (5000);
   TraceToUdp("Ready! Use ", 0x02);
-  pinMode(powerLED, OUTPUT);
-  digitalWrite(powerLED, 0);
-  pinMode(connectionLED, OUTPUT);
-  digitalWrite(connectionLED, 0);
-  pinMode(serialLED, OUTPUT);
-  digitalWrite(serialLED, false);
-  pinMode(readyPin, OUTPUT);
-  // pinMode(led_PIN, OUTPUT);
   pinMode(configPin, INPUT);
-  //  digitalWrite(led_PIN, true);
-  //  pinMode(debugPin, INPUT_PULLUP);
+  digitalWrite(powerLED, 0);
+  digitalWrite(connectionLED, 0);
+  digitalWrite(serialLED, 0);
+  delay(1000);
+  digitalWrite(readyPin, 0);
 }
 
 void loop() {
 
-  if (millis() - timeRestart >= 10000 && restartCompleted == false)
+  if (millis() - timeRestart >= 20000 && restartCompleted == false)
   {
     restartCompleted = true;
     if (CheckCurrentIP())                    // check ip address
@@ -252,7 +276,6 @@ void loop() {
         Serial.print("Ready to use ! ");
         PrintUdpConfig();
       }
-      AffLed();
       digitalWrite(readyPin, true);
     }
     else
@@ -260,18 +283,27 @@ void loop() {
       if (configPin == true)
       {
         Serial.print("Not ready to use ! ");
+        PrintUdpConfig();
       }
-      PrintUdpConfig();
+
     }
     Udp.begin(udpListenPort);
+    UdpG.begin(gatewayPort);
     delay (5000);
     if (configPin == true)
     {
       WiFi.printDiag(Serial);
     }
   }
-
-
+  if ((bitRead(diagByte, WifidiagBit) || bitRead(diagByte, IPdiagBit)) &&  millis()  > diagTime + diagTimeCycle &&  retryWifi <= 5)
+  {
+#if defined debugModeOn
+    Serial.println("request default wifi connection");
+#endif
+    diagTime = millis();
+    ConnectWifi("default", "default");
+    WiFi.mode(WIFI_STA);
+  }
   if (millis() - timeSerial >= 20)
   {
     int lenInput = Serial_have_message();
@@ -286,46 +318,60 @@ void loop() {
     timeSerial = millis();
   }
 
-
-  if (millis() - timeMemory >= 30000)
+  if (millis() - timeCheck >= 30000)
   {
     boolean wifiStatus = false;
     if (WiFi.status() == WL_CONNECTED)
     {
-      wifiStatus = 1;
-    }
-    if (connectionStatus == 1 && (CheckCurrentIP() && wifiStatus) == 0)
-    {
+      wifiStatus = true;
+      bitWrite(diagByte, WifidiagBit, 0);
 #if defined debugModeOn
-      Serial.println("connection lost");
+      Serial.println("wifi connected ");
 #endif
-      digitalWrite(readyPin, false);
     }
-    connectionStatus = CheckCurrentIP() && wifiStatus;
-
+    else {
+      bitWrite(diagByte, WifidiagBit, 1);
+      digitalWrite(readyPin, false);
+#if defined debugModeOn
+      Serial.println("wifi not connected ");
+#endif
+    }
     freeMemory = ESP.getFreeHeap();
     String  strS = "free memory:" + String(freeMemory);
-    TraceToUdp(strS, 0x01);
+    //  TraceToUdp(strS, 0x01);
     if (debugMode == true)
     {
       Serial.println(strS);
     }
-    timeMemory = millis();
+    connectedStatus = CheckCurrentIP() && wifiStatus;
+    timeCheck = millis();
   }
   if (millis() - timeUdp >= 100)
   {
     InputUDP();
-    timeUdp;
+    InputUDPG();
+    timeUdp = millis();
   }
   // *** refresh LED
-  if (millis() - timeAffLED > 1000)
+  if (millis() - timeAffLED > 1000 && restartCompleted == true)
   {
     AffLed();
     timeAffLED = millis();
   }
   // *** end of loop refresh LED
+  if (millis() - timeUpdateStatus >= updateStatusCycle)
+  {
+    SendStatus();
+    timeUpdateStatus = millis();
+  }
+  if (!connectedStatus && (millis() > timeCheckWifi + 180000))
+  {
+    retryWifi = 0;
+    currentSSID = (currentSSID + 1) % 3;
+    Restart();
+    timeCheckWifi = millis();
+  }
 }
-
 void ConnectWifi(char *ssid, char *pass)
 {
   timeCheckWifi = millis();
@@ -335,34 +381,75 @@ void ConnectWifi(char *ssid, char *pass)
   }
   else
   {
+    int posCr = 0;
+    for ( posCr = 0; posCr < maxSSIDLength; posCr++)
+    {
+      if (ssid[posCr] == 0x0d || ssid[posCr] == 0x0a || ssid[posCr] == 0x00)  { // look for Cr end of ssid
+        break;
+      }
+    }
+
+
+    for (int i = posCr; i < maxSSIDLength ; i++) {
+      ssid[i] = 0x00;
+#if defined debugModeOn
+      Serial.print(ssid[i], HEX);
+#endif
+    }
+#if defined debugModeOn
+    Serial.println();
+#endif
+    for ( posCr = 0; posCr < maxPSWLength; posCr++)
+    {
+      if (pass[posCr] == 0x0d || pass[posCr] == 0x0a || pass[posCr] == 0x00)  { // look for Cr end of ssid
+        break;
+      }
+    }
+    for (int i = posCr; i < maxPSWLength ; i++) {
+      pass[i] = 0x00;
+    }
+
     WiFi.begin(ssid, pass);
   }
-  if (digitalRead(configPin) == true)
+  if (digitalRead(configPin) == true && retryWifi < 5)
   {
     Serial.println();
     Serial.print("gateway version:");
     Serial.println(versionID);
-    Serial.print("\n Please wait... Connecting to "); Serial.println(ssid);
+    Serial.print("\n Please wait... Connecting to ");
+    Serial.print(ssid);
+    Serial.print(" retry:");
+    Serial.println(retryWifi);
   }
-  uint8_t i = 0;
-  while (WiFi.status() != WL_CONNECTED && i++ < 5)
+
+  while (WiFi.status() != WL_CONNECTED && retryWifi <= 5)
   {
     delay(2000);
-    if (i == 5) {
+    if (retryWifi >= 5) {
       if (digitalRead(configPin) == true) // gateway config mode
       {
-        Serial.print("Could not connect to "); Serial.println(ssid);
+        Serial.print("Could not connect to "); Serial.print(ssid);
+        Serial.print(" retry:"); Serial.println(retryWifi);
       }
       delay(500);
       bitWrite(diagByte, bitDiagWifi, 1);       // position bit diag
-      Udp.stop();
-
+      if (digitalRead(configPin) == false) // gateway config mode
+      {
+        break;
+      }
+      else {
+        ScanWifi();
+        retryWifi++;
+        break;
+        //Udp.stop();
+      }
     }
     else
     {
-      bitWrite(diagByte, bitDiagWifi, 0);       // position bit diag
+      retryWifi++;
       WiFi.mode(WIFI_STA);
       Udp.begin(udpListenPort);
+      UdpG.begin(gatewayPort);
       delay (5000);
       if (digitalRead(configPin) == true) // gateway run mode
       {
@@ -370,6 +457,10 @@ void ConnectWifi(char *ssid, char *pass)
       }
     }
   }
+  if (WiFi.status() == WL_CONNECTED) {
+    bitWrite(diagByte, bitDiagWifi, 0);       // position bit diag
+  }
+
 }
 boolean CheckCurrentIP()
 {
@@ -381,11 +472,16 @@ boolean CheckCurrentIP()
       Serial.println("IP address issue");
     }
     bitWrite(diagByte, bitDiagIP, 1);       // position bit diag
+    digitalWrite(readyPin, false);
     return false;
 
   }
   else
   {
+    if (debugMode == true)
+    {
+      Serial.println(currentIP);
+    }
     bitWrite(diagByte, bitDiagIP, 0);       // position bit diag
     return true;
   }
@@ -400,7 +496,6 @@ void PrintUdpConfig() {
     Serial.print(" ");
     Serial.print(" port:");
     Serial.println(udpPort[i]);
-
   }
 }
 
@@ -417,6 +512,23 @@ void SendToUdp( int mlen, int serviceId) {
     Udp.beginPacket(serverIP, udpPort[serviceId]);
     Udp.write(dataBin, mlen);
     Udp.endPacket();
+  }
+  timeLastSentUdp = millis();
+}
+
+void SendToUdpG( int mlen, int serviceId) {
+  if ( millis() - timeLastSentUdp  > 200)
+  {
+    UdpG.beginPacket(serverIP, udpPort[serviceId]);
+    UdpG.write(dataBin, mlen);
+    UdpG.endPacket();
+  }
+  else
+  {
+    delay (200);
+    UdpG.beginPacket(serverIP, udpPort[serviceId]);
+    UdpG.write(dataBin, mlen);
+    UdpG.endPacket();
   }
   timeLastSentUdp = millis();
 }
@@ -450,7 +562,6 @@ void RouteToUdp(int len)
 {
   dataBin[0] = bufParam[0]; // station address
   dataBin[1] = 0x3B;
-  /// dataBin[2] = 0x64;
   dataBin[2] = bufParam[2];
   dataBin[3] = 0x3B;
   dataBin[4] = uint8(len);  //len
@@ -465,11 +576,11 @@ void RouteToUdp(int len)
   }
   SendToUdp( len + 6 , 0);
 }
+
 int Serial_have_message() {
   if (Serial.available() )
   {
     digitalWrite(serialLED, 1);
-    serialLEDOn = true;
     if (digitalRead(configPin) == false) // gateway run mode
     {
       while (Serial.available())
@@ -499,7 +610,6 @@ int Serial_have_message() {
               break;
             }
 
-          //  }
           case 0x7e:
             if (frameFlag == 3)   // last 0x7e start frame completed
             {
@@ -524,7 +634,6 @@ int Serial_have_message() {
             if (frameFlag == 7)
             {
               frameFlag = 8;
-              //            TraceToUdp(" +", 0x01);
               frameLen = 0;
               frameCount = 0;
               udpFlag = 0;
@@ -594,7 +703,6 @@ int Serial_have_message() {
           frameCount = 0;
           frameFlag = 0x00;
           return (retLen);
-
         }
         else
         {
@@ -624,20 +732,20 @@ int Serial_have_message() {
               {
                 Serial.print(ssid1[i], HEX);
                 Serial.print("-");
-
-                Serial.println("");
               }
+              Serial.println("");
 #endif
               for (int i = 0; i < maxSSIDLength; i++)
               {
                 ssid1[i] = 0x00;
               }
+              Srequest.replace("\n", "");
               UpdateEepromParameter(cmdIdx, Srequest, cmdPos);
               String id = Srequest.substring(cmdPos);
-              id.toCharArray(ssid1, id.length() - 1);
+              LoadEerpromParamters();
 #if defined(debugModeOn)
               Serial.println("new SSID:");
-              for (int i = 0; i < maxSSIDLength; i++)
+              for (int i = 0; i < id.length() - 1; i++)
               {
                 Serial.print(ssid1[i], HEX);
                 Serial.print("-");
@@ -661,12 +769,13 @@ int Serial_have_message() {
               {
                 pass1[i] = 0x00;
               }
+              Srequest.replace("\n", "");
               UpdateEepromParameter(cmdIdx, Srequest, cmdPos);
               String id = Srequest.substring(cmdPos);
-              id.toCharArray(pass1, id.length() - 1);
+              LoadEerpromParamters();
 #if defined(debugModeOn)
               Serial.println("new psw:");
-              for (int i = 0; i < maxPSWLength; i++)
+              for (int i = 0; i <  id.length() + 1; i++)
               {
                 Serial.print(pass1[i], HEX);
                 Serial.print("-");
@@ -691,9 +800,19 @@ int Serial_have_message() {
                 {
                   ssid2[i] = 0x00;
                 }
+#if defined(debugModeOn)
+                Serial.println("Srequest:");
+                for (int i = 0; i < maxSSIDLength; i++)
+                {
+                  Serial.print(Srequest[i], HEX);
+                  Serial.print("-");
+                }
+                Serial.println("");
+#endif
+                Srequest.replace("\n", "");
                 UpdateEepromParameter(cmdIdx, Srequest, cmdPos);
                 String id = Srequest.substring(cmdPos);
-                id.toCharArray(ssid2, id.length() - 1);
+                LoadEerpromParamters();
 #if defined(debugModeOn)
                 Serial.println("new SSID:");
                 for (int i = 0; i < maxSSIDLength; i++)
@@ -721,9 +840,10 @@ int Serial_have_message() {
               {
                 pass2[i] = 0x00;
               }
+              Srequest.replace("\n", "");
               UpdateEepromParameter(cmdIdx, Srequest, cmdPos);
               String id = Srequest.substring(cmdPos);
-              id.toCharArray(pass2, id.length() - 1);
+              LoadEerpromParamters();
 #if defined(debugModeOn)
               Serial.println("new psw:");
               for (int i = 0; i < maxPSWLength; i++)
@@ -741,21 +861,17 @@ int Serial_have_message() {
               Serial.println(WiFi.localIP());
               Serial.print("ports:");
               Serial.print(routePort);
-              Serial.print(" ");
+              Serial.print(" G:");
               Serial.print(tracePort);
               Serial.print(" ");
-              Serial.println(udpListenPort);
+              Serial.print(udpListenPort);
+              Serial.print(" G:");
+              Serial.println(gatewayPort);
               break;
             }
           case 5:     // Restart
             {
-              Udp.stop();
-              bitWrite(diagByte, bitDiagWifi, 0);       // position bit diagc              digitalWrite(connextionLED,false);
-              WiFi.disconnect(true);
-              delay(1000);
-              restartCompleted = false;
-              timeRestart = millis();
-              InitConfig();
+              Restart();
               break;
             }
           case 6:     // DebugOn
@@ -783,11 +899,13 @@ int Serial_have_message() {
           case 10:    // SSID=1
             {
               currentSSID = 0x01;
+              LoadEerpromParamters();
               break;
             }
           case 11:    // SSID=2
             {
               currentSSID = 0x02;
+              LoadEerpromParamters();
               break;
             }
           case 12:    // ShowEeprom
@@ -821,6 +939,8 @@ int Serial_have_message() {
       }
       return (0);
     }
+    Srequest = "";
+
   }
 }
 void InputUDP() {
@@ -828,7 +948,6 @@ void InputUDP() {
 
   if (packetSize)
   {
-    //  TraceToUdp("udp input", 0x02);
     String lenS = "udp input" + String(packetSize);
     TraceToUdp(lenS, 0x01);
     bufSerialOut[1] = 0x7f;
@@ -837,7 +956,6 @@ void InputUDP() {
     bufSerialOut[4] = 0x7e;
 
     Udp.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
-    //   int packetBufferLen=sizeof(packetBuffer);
     int packetBufferLen = packetSize;
     bufSerialOut[5] = packetSize;
     for (int i = 0; i < maxUDPResp; i++)
@@ -849,20 +967,96 @@ void InputUDP() {
     {
 
       bufSerialOut[i + 6] = packetBuffer[i];
-      //     Serial.print(packetBuffer[i],HEX);
-      //     Serial.print(":");
     }
     if (packetSize < 6)
     {
       packetSize = 6;
     }
     digitalWrite(serialLED, 1);
-    serialLEDOn = true;
     Serial.write(bufSerialOut, packetSize + 6);
-
   }
 }
+void InputUDPG() {
+#define commandBytePosition 7
+#define crcLen 2
+#define selectSSID indicatorsRequest
+  int packetSize = 0;
+  packetSize = UdpG.parsePacket();  // message from UDP
+  if (packetSize)
+  {
+    String lenS = "udp input" + String(packetSize);
+    UdpG.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
+    remoteAddr = UdpG.remoteIP();
+    int packetBufferLen = packetSize;
+    uint8_t computeCRC = CRC8(&packetBuffer[commandBytePosition], packetSize - commandBytePosition - crcLen);
+#if defined debugModeOn
+    Serial.print("from:");
+    Serial.println(remoteAddr);
+#endif
+    if (computeCRC != packetBuffer[packetSize - 1])
+    {
+#if defined debugModeOn
+      Serial.print("erreur expected crc:");
+      Serial.println(computeCRC);
+#endif
+    }
+#if defined debugModeOn
+    Serial.print("receive on G len:");
+    Serial.print(packetSize);
+    Serial.print(" crc:");
+    Serial.println(packetBuffer[packetSize - 1], HEX);
+    for (int i = 0; i < packetSize; i++)
+    {
+      Serial.print(packetBuffer[i], HEX);
+      Serial.print(":");
+    }
+    Serial.println("");
+#endif
+    if (packetBuffer[commandBytePosition] == serviceInfoRequest) {
+      serverIP[0] = remoteAddr[0];
+      serverIP[1] = remoteAddr[1];
+      serverIP[2] = remoteAddr[2];
+      serverIP[3] = remoteAddr[3];
+      uint8_t idx = packetBuffer[commandBytePosition + 1] - 1;
+      unsigned int value = packetBuffer[commandBytePosition + 2] * 256 + packetBuffer[commandBytePosition + 3];
+#if defined debugModeOn
+      Serial.print("serverIP:");
+      Serial.print(idx);
+      Serial.print(":");
+      Serial.println(value);
+#endif
+      udpPort[idx] = value;
+    }
+    if (packetBuffer[commandBytePosition] == selectSSID) {
+      uint8_t idx = packetBuffer[commandBytePosition + 8];
+      if (digitalRead(configPin) == true )
+      {
+        Serial.print("select SSID:");
+        Serial.println(idx);
+      }
+      if ( idx == 0 || idx == 1 || idx == 2)
+      {
+        currentSSID = idx;
+        if (idx == 0)
+        {
+          return;
+        }
+      }
+      else {
+        return;
+      }
 
+      Udp.stop();
+      bitWrite(diagByte, bitDiagWifi, 0);       // position bit diagc              digitalWrite(connextionLED,false);
+      WiFi.disconnect(true);
+      delay(1000);
+      restartCompleted = false;
+      timeRestart = millis();
+      Restart();
+      SendStatus();
+    }
+  }
+}
 void InitConfig()
 {
   if (currentSSID == 0x00)
@@ -871,6 +1065,7 @@ void InitConfig()
   }
   if (currentSSID == 0x01 )
   {
+
     ConnectWifi(ssid1, pass1);
   }
   if (currentSSID == 0x02 )
@@ -880,6 +1075,7 @@ void InitConfig()
 
   WiFi.mode(WIFI_STA);
   Udp.begin(udpListenPort);
+  UdpG.begin(gatewayPort);
   delay (5000);
   TraceToUdp("Ready! Use ", 0x02);
 }
@@ -912,44 +1108,38 @@ void ScanWifi() {
 }
 void AffLed()
 {
-  serialLEDOn = false;
   digitalWrite(serialLED, 0);
-  if (restartCompleted == false)
+  if (!bitRead(diagByte, WifidiagBit) && !bitRead(diagByte, IPdiagBit))
   {
-    //    digitalWrite(connectionLED, 0);
-    //   connectionLEDOn = false;
-    digitalWrite(powerLED, 1);
+#if defined debugOn
+    Serial.print("cnx ko:");
+    Serial.println(diagByte, HEX);
+#endif
     digitalWrite(connectionLED, 0);
-    powerLEDOn = true;
-    connectionLEDOn = false;
-    return;
+
   }
-  if ((diagByte && 0b00000011) == 0b00000000)
+  else if (bitRead(diagByte, WifidiagBit) && bitRead(diagByte, IPdiagBit))
   {
+#if defined debugOn
+    Serial.print("cnx ok:");
+    Serial.println(diagByte, HEX);
+#endif
     digitalWrite(connectionLED, 1);
-    connectionLEDOn = true;
-  }
-  if ((diagByte && 0b00000011) == 0b00000011)
-  {
-    digitalWrite(connectionLED, 0);
-    connectionLEDOn = false;
   }
   else {
-    if (( diagByte && 0b00000011) == 0b00000001 || ( diagByte && 0b00000011) == 0b00000010)
-    {
-      connectionLEDOn = !connectionLEDOn;
-      digitalWrite(connectionLED, connectionLEDOn);
-    }
+#if defined debugOn
+    Serial.print("cnx half:");
+    Serial.println(diagByte, HEX);
+#endif
+    digitalWrite(connectionLED, !digitalRead(connectionLED));
   }
   if ( diagByte == 0b00000000 && digitalRead(configPin) == false)
   {
     digitalWrite(powerLED, 1);
-    powerLEDOn = true;
   }
   else
   {
-    powerLEDOn = !powerLEDOn;
-    digitalWrite(powerLED, powerLEDOn);
+    digitalWrite(powerLED, !digitalRead(powerLED));
   }
 
 }
@@ -960,7 +1150,6 @@ void setInitialParam(int number)
   Serial.print(" set parameter : ");
   Serial.print(number);
   Serial.print(" size: ");
-  //  uint8_t nb = paramLength[number];
   Serial.print(paramLength[idxArray]);
   Serial.println();
 
@@ -1057,7 +1246,7 @@ void ShowEeeprom()
     String  Srequest = paramList[i];
     Serial.print(Srequest);
     Serial.print(": ");
-    commandReturn rc = ParamNumber.GetCommand(Srequest); // look for commant inside the input
+    commandReturn rc = ParamNumber.GetCommand(Srequest); // look for command inside the input
     int cmdIdx = rc.idxCommand;
     if (cmdIdx != -1)
     {
@@ -1069,7 +1258,7 @@ void ShowEeeprom()
       if (paramType[i] == 0x00 )
       {
         parameter RC = storedParam.GetParameter(cmdIdx);
-        Serial.print(RC.parameterValue);
+        Serial.println(RC.parameterValue);
       }
     }
   }
@@ -1087,27 +1276,25 @@ void UpdateEepromParameter(uint8_t cmdIdx, String Srequest, int cmdPos)
   Sparam = Sparam.substring(0, sizeof(Sparam) - 1); // remove last char " = "
   String  Svalue = Srequest;                       // get command value
   Svalue = Svalue.substring(cmdPos);              //
-  //  int valueLen = sizeof(Svalue);
   char Cvalue[maxParameterLen + 50];
   Svalue.toCharArray(Cvalue, sizeof(Svalue));
 
   commandReturn rc = ParamNumber.GetCommand(Sparam); // look for parameter inside the input
   int paramIdx = rc.idxCommand;
-  // int paramPos = rc.idxPos;
-
   if (paramIdx != -1)
   {
     int idxArray = paramIdx ;
     Serial.print(" set parameter : ");
     Serial.print(idxArray);
     Serial.print(" size: ");
-    //  uint8_t nb = paramLength[number];
     Serial.print(paramLength[idxArray]);
     Serial.println();
-
     if (paramType[idxArray] == 0x00)
     {
       byte Bvalue[maxParameterLen + 50];
+      for (int i = 0; i < sizeof(Bvalue); i++) {
+        Bvalue[i] = 0x00;
+      }
       Svalue.getBytes(Bvalue, paramLength[idxArray]);
       Serial.print("0x00 rc: ");
       Serial.println(storedParam.SetParameter(idxArray, paramLength[idxArray], Bvalue));
@@ -1167,7 +1354,6 @@ void LoadEerpromParamters()
 #endif
     stAddr = numericRC.parameterNumericValue;
   }
-
   Srequest = "SSpeed";
 #if defined(debugModeOn)
   Serial.print(Srequest);
@@ -1215,8 +1401,6 @@ void LoadEerpromParamters()
 #endif
     serialLED = numericRC.parameterNumericValue;
   }
-
-
   Srequest = "pwrLED";
 #if defined(debugModeOn)
   Serial.print(Srequest);
@@ -1300,7 +1484,6 @@ void LoadEerpromParamters()
       ssid1[i] = RC.parameterValue[i];
     }
   }
-
   Srequest = "PSW1";
 #if defined(debugModeOn)
   Serial.print(Srequest);
@@ -1333,7 +1516,7 @@ void LoadEerpromParamters()
 #if defined(debugModeOn)
     Serial.println(RC.parameterValue);
 #endif
-    for (int i = 0; i < sizeof(ssid2); i++)
+    for (int i = 0; i < sizeof(ssid2) - 1; i++)
     {
       ssid2[i] = RC.parameterValue[i];
     }
@@ -1352,7 +1535,7 @@ void LoadEerpromParamters()
 #if defined(debugModeOn)
     Serial.println(RC.parameterValue);
 #endif
-    for (int i = 0; i < sizeof(pass2); i++)
+    for (int i = 0; i < sizeof(pass2) - 1; i++)
     {
       pass2[i] = RC.parameterValue[i];
     }
@@ -1404,6 +1587,22 @@ void LoadEerpromParamters()
     Serial.println(numericRC.parameterNumericValue);
 #endif
     udpListenPort = numericRC.parameterNumericValue;
+  }
+
+  Srequest = "gatewayPort";
+#if defined(debugModeOn)
+  Serial.print(Srequest);
+  Serial.print(": ");
+#endif
+  rc = ParamNumber.GetCommand(Srequest); // look for commant inside the input
+  cmdIdx = rc.idxCommand;
+  if (cmdIdx != -1)
+  {
+    numericParameter numericRC = storedParam.GetNumericParameter(cmdIdx);
+#if defined(debugModeOn)
+    Serial.println(numericRC.parameterNumericValue);
+#endif
+    gatewayPort = numericRC.parameterNumericValue;
   }
 
   Srequest = "IP1";
@@ -1475,4 +1674,44 @@ void LoadEerpromParamters()
   }
 }
 
-
+void SendStatus()
+{
+#define frameLen 23
+  dataBin[0] = frameNumber;
+  dataBin[1] = 0x00;
+  dataBin[2] = uint8_t(frameLen);
+  dataBin[3] = uint8_t(stAddr / 256); // addrSSerial
+  dataBin[4] = uint8_t(stAddr);  // addrMSerial
+  dataBin[5] = 0x00;  // Print
+  dataBin[6] = statusResponse;  //
+  dataBin[7] = diagByte;
+  dataBin[8] = 0x00;
+  dataBin[9] = versionID;
+  dataBin[10] = 0x00;
+  dataBin[11] = currentSSID;
+  dataBin[12] = 0x00;
+  dataBin[13] = serverIP[0] ;
+  dataBin[14] = serverIP[1] ;
+  dataBin[15] = serverIP[2] ;
+  dataBin[16] = serverIP[3] ;
+  dataBin[17] = 0x00;
+  dataBin[18] = currentIP[0] ;
+  dataBin[19] = currentIP[1] ;
+  dataBin[20] = currentIP[2] ;
+  dataBin[21] = currentIP[3] ;
+  SendToUdpG(frameLen, 1);
+  frameNumber++;
+#if defined(debugModeOn)
+  Serial.println("send status");
+#endif
+}
+void Restart() {
+  Udp.stop();
+  bitWrite(diagByte, bitDiagWifi, 0);       // position bit diagc              digitalWrite(connextionLED,false);
+  WiFi.disconnect(true);
+  delay(1000);
+  restartCompleted = false;
+  timeRestart = millis();
+  retryWifi = 0x00;
+  InitConfig();
+}
