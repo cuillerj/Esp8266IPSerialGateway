@@ -10,10 +10,12 @@
     regurarly send status frame
 
     release notes version 2.5
-    listen 2 UDP ports - one UDPG dedicated to receive gateway commands (used to dynamicaly modify server IP addrress and port 
+    listen 2 UDP ports - one UDPG dedicated to receive gateway commands (used to dynamicaly modify server IP addrress and port
       and to switch between SSID according to indicator value sotred n dtabase)
     automatic switch between 2 wifi in case of issue
-    
+    release notes version 2.6
+     send duration since reboot in status frame
+
 
 
 */
@@ -46,7 +48,7 @@
 */
 //#define debugModeOn               // uncomment this define to debug the code
 //#define traceOn               // uncomment to send udp trace
-#define versionID 25
+#define versionID 26
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <EEPROM.h>
@@ -1676,7 +1678,7 @@ void LoadEerpromParamters()
 
 void SendStatus()
 {
-#define frameLen 23
+#define frameLen 26
   dataBin[0] = frameNumber;
   dataBin[1] = 0x00;
   dataBin[2] = uint8_t(frameLen);
@@ -1699,6 +1701,10 @@ void SendStatus()
   dataBin[19] = currentIP[1] ;
   dataBin[20] = currentIP[2] ;
   dataBin[21] = currentIP[3] ;
+  dataBin[22] = 0x00;
+  unsigned int minuteSinceReboot = (millis() / 60000);
+  dataBin[23] = uint8_t(minuteSinceReboot / 256);
+  dataBin[24] = uint8_t(minuteSinceReboot);
   SendToUdpG(frameLen, 1);
   frameNumber++;
 #if defined(debugModeOn)
