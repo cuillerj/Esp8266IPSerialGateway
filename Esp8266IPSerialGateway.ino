@@ -15,7 +15,10 @@
     automatic switch between 2 wifi in case of issue
     release notes version 2.6
      send duration since reboot in status frame
-
+    release notes version 2.7
+      configPin debug and modification: set pullUp, High:normal mode Low:configuration mode
+    release notes version 2.8
+      tracePort renamed commandPort
 
 
 */
@@ -47,8 +50,9 @@
     2 GPIO are used in input mode (1 for set in debug mode, 1 for set in configuration mode) - take care to the 3.3v limitation !!
 */
 //#define debugModeOn               // uncomment this define to debug the code
-//#define traceOn               // uncomment to send udp trace
-#define versionID 26
+#define forceErase false            // set to true in case of major issue with the eeprom tool
+
+#define versionID 28
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <EEPROM.h>
@@ -68,7 +72,7 @@
     Ended by "=" means this command will set the parameter of the seame name
 */
 String commandList[commandnumber] = {"SSID1=", "PSW1=", "SSID2=", "PSW2=", "ShowWifi", "Restart", "DebugOn", "DebugOff", "ScanWifi", "SSID=0", "SSID=1", "SSID=2", "ShowEeprom", "EraseEeprom",
-                                     "routePort=", "tracePort=", "IP1=", "IP2=", "IP3=", "IP4=", "stAddr=", "SSpeed=", "cnxLED=", "serialLED=", "pwrLED=", "confPin=", "debugPin=", "readyPin=", "listenPort=", "gatewayPort=" ""
+                                     "routePort=", "commandPort=", "IP1=", "IP2=", "IP3=", "IP4=", "stAddr=", "SSpeed=", "cnxLED=", "serialLED=", "pwrLED=", "confPin=", "debugPin=", "readyPin=", "listenPort=", "gatewayPort=" ""
                                     };
 
 /* *** paramters list definition
@@ -76,7 +80,7 @@ String commandList[commandnumber] = {"SSID1=", "PSW1=", "SSID2=", "PSW2=", "Show
     Parameters that can be set to value must have a name that fit with the commandList (without "=")
 */
 String paramList[parametersNumber] = {"stAddr", "SSpeed", "cnxLED", "serialLED", "pwrLED", "confPin", "debugPin", "readyPin" , "SSID1", "PSW1", "SSID2", "PSW2",
-                                      "routePort", "tracePort", "listenPort", "IP1", "IP2", "IP3", "IP4", "gatewayPort"
+                                      "routePort", "commandPort", "listenPort", "IP1", "IP2", "IP3", "IP4", "gatewayPort"
                                      };
 /*
     define the exact number of characters that define the parameter's values
@@ -90,7 +94,7 @@ uint8_t paramType[parametersNumber] =         {0x02, 0x03, 0x01, 0x01, 0x01, 0x0
    define the default paramter's values that will be used before configuration
    The number of caracters must fit with the parameter length
 */
-byte paramValue[parametersNumber][50] =       {"1286", "38400", "14", "12", "13", "04", "02", "05", "yourfirstssid", "yourfirstpsw", "yoursecondssid", "yoursecondpass", "1901", "1902", "8888", "192", "168", "001", "005", "8889"};
+byte paramValue[parametersNumber][50] =       {"1000", "38400", "14", "12", "13", "04", "02", "05", "yourfirstssid", "yourfirstpassword...", "yoursecondssid", "yoursecondpassword...", "1901", "1902", "8888", "192", "168", "001", "005", "8889"};
 String *PparamList[parametersNumber];  // pointera array (to each paramter)
 String *PcommandList[commandnumber];   // pointera array (to each command)
 
@@ -103,7 +107,7 @@ LookForStr SerialInput(PcommandList, commandnumber);   // define object that loo
 */
 #include <ManageParamEeprom.h>              // include the code 
 #define ramOffset 0                         // define the eeprom starting position (default 0 - can be change for other software compatibilty reason)
-#define forceErase false                    // set to true in case of major issue with the eeprom tool
+
 char keyword[] = "AzErTy";                  // must contain 6 charasters  - this keyword is used to check eeprom compatibity and can be modified
 ManageParamEeprom storedParam (parametersNumber, ramOffset, keyword);
 
@@ -119,7 +123,7 @@ int connectionLED = 14;
 int stAddr = 0;
 int SSpeed = defaultSerialSpeed;
 int routePort = 1901;
-int tracePort = 1902;
+int commandPort = 1902;
 byte serverIP[4] = {0xc0, 0xa8, 0x01, 0x05};  //
 IPAddress remoteAddr ;
 int udpListenPort = 8888;
@@ -137,8 +141,6 @@ uint8_t frameNumber = 0x00;
 #define maxSSIDLength 50
 #define maxPSWLength 50
 
-//#define debug_PIN 14 // switch of udp trace when grounded
-//#define led_PIN 15  // off if wifi connection not established
 char ssid1[maxSSIDLength] = "";       // first SSID  will be used at first
 char pass1[maxPSWLength] = "";      // first pass
 char ssid2[maxSSIDLength] = "";        // second SSID will be used in case on connection failure with the first ssid
@@ -248,7 +250,7 @@ void setup() {
   }
 
   udpPort[0] = routePort; //
-  udpPort[1] = tracePort; //
+  udpPort[1] = commandPort; //
   timeRestart = millis();
 
   ConnectWifi("default", "default");
@@ -258,7 +260,7 @@ void setup() {
   UdpG.begin(gatewayPort);
   delay (5000);
   TraceToUdp("Ready! Use ", 0x02);
-  pinMode(configPin, INPUT);
+  pinMode(configPin, INPUT_PULLUP);
   digitalWrite(powerLED, 0);
   digitalWrite(connectionLED, 0);
   digitalWrite(serialLED, 0);
@@ -273,7 +275,7 @@ void loop() {
     restartCompleted = true;
     if (CheckCurrentIP())                    // check ip address
     {
-      if (configPin == true)
+      if (!digitalRead(configPin))
       {
         Serial.print("Ready to use ! ");
         PrintUdpConfig();
@@ -282,7 +284,7 @@ void loop() {
     }
     else
     {
-      if (configPin == true)
+      if (!digitalRead(configPin))
       {
         Serial.print("Not ready to use ! ");
         PrintUdpConfig();
@@ -292,7 +294,7 @@ void loop() {
     Udp.begin(udpListenPort);
     UdpG.begin(gatewayPort);
     delay (5000);
-    if (configPin == true)
+    if (!digitalRead(configPin))
     {
       WiFi.printDiag(Serial);
     }
@@ -413,7 +415,7 @@ void ConnectWifi(char *ssid, char *pass)
 
     WiFi.begin(ssid, pass);
   }
-  if (digitalRead(configPin) == true && retryWifi < 5)
+  if (!digitalRead(configPin) && retryWifi < 5)
   {
     Serial.println();
     Serial.print("gateway version:");
@@ -428,14 +430,14 @@ void ConnectWifi(char *ssid, char *pass)
   {
     delay(2000);
     if (retryWifi >= 5) {
-      if (digitalRead(configPin) == true) // gateway config mode
+      if (!digitalRead(configPin)) // gateway config mode
       {
         Serial.print("Could not connect to "); Serial.print(ssid);
         Serial.print(" retry:"); Serial.println(retryWifi);
       }
       delay(500);
       bitWrite(diagByte, bitDiagWifi, 1);       // position bit diag
-      if (digitalRead(configPin) == false) // gateway config mode
+      if (digitalRead(configPin)) // gateway config mode
       {
         break;
       }
@@ -453,7 +455,7 @@ void ConnectWifi(char *ssid, char *pass)
       Udp.begin(udpListenPort);
       UdpG.begin(gatewayPort);
       delay (5000);
-      if (digitalRead(configPin) == true) // gateway run mode
+      if (!digitalRead(configPin)) // gateway run mode
       {
         WiFi.printDiag(Serial);
       }
@@ -583,7 +585,7 @@ int Serial_have_message() {
   if (Serial.available() )
   {
     digitalWrite(serialLED, 1);
-    if (digitalRead(configPin) == false) // gateway run mode
+    if (digitalRead(configPin)) // gateway run mode
     {
       while (Serial.available())
       {
@@ -864,7 +866,7 @@ int Serial_have_message() {
               Serial.print("ports:");
               Serial.print(routePort);
               Serial.print(" G:");
-              Serial.print(tracePort);
+              Serial.print(commandPort);
               Serial.print(" ");
               Serial.print(udpListenPort);
               Serial.print(" G:");
@@ -1031,7 +1033,7 @@ void InputUDPG() {
     }
     if (packetBuffer[commandBytePosition] == selectSSID) {
       uint8_t idx = packetBuffer[commandBytePosition + 8];
-      if (digitalRead(configPin) == true )
+      if (!digitalRead(configPin) )
       {
         Serial.print("select SSID:");
         Serial.println(idx);
@@ -1135,7 +1137,7 @@ void AffLed()
 #endif
     digitalWrite(connectionLED, !digitalRead(connectionLED));
   }
-  if ( diagByte == 0b00000000 && digitalRead(configPin) == false)
+  if ( diagByte == 0b00000000 && digitalRead(configPin))
   {
     digitalWrite(powerLED, 1);
   }
@@ -1572,7 +1574,7 @@ void LoadEerpromParamters()
 #if defined(debugModeOn)
     Serial.println(numericRC.parameterNumericValue);
 #endif
-    tracePort = numericRC.parameterNumericValue;
+    commandPort = numericRC.parameterNumericValue;
   }
 
   Srequest = "listenPort";
