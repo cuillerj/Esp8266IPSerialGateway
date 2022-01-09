@@ -19,8 +19,13 @@
       configPin debug and modification: set pullUp, High:normal mode Low:configuration mode
     release notes version 2.8
       tracePort renamed commandPort
-
-
+    release notes version 2.9
+      use SSID1 at the boot instead of 0 default
+      correction bug commandPort from eeprom
+    release notes version 3.0
+      correction bug switch wifi
+    release notes version 3.1
+      correction bug read serial before end of reboot
 */
 /*
   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
@@ -52,7 +57,7 @@
 //#define debugModeOn               // uncomment this define to debug the code
 #define forceErase false            // set to true in case of major issue with the eeprom tool
 
-#define versionID 28
+#define versionID 31
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <EEPROM.h>
@@ -94,7 +99,7 @@ uint8_t paramType[parametersNumber] =         {0x02, 0x03, 0x01, 0x01, 0x01, 0x0
    define the default paramter's values that will be used before configuration
    The number of caracters must fit with the parameter length
 */
-byte paramValue[parametersNumber][50] =       {"1000", "38400", "14", "12", "13", "04", "02", "05", "yourfirstssid", "yourfirstpassword...", "yoursecondssid", "yoursecondpassword...", "1901", "1902", "8888", "192", "168", "001", "005", "8889"};
+byte paramValue[parametersNumber][50] =       {"1000", "38400", "14", "12", "13", "04", "02", "05", "cuiller", "116A2E2CC25E3DDC3593E13D29", "cuiller3", "5E98D9BEC6", "1901", "1902", "8888", "192", "168", "001", "005", "8889"};
 String *PparamList[parametersNumber];  // pointera array (to each paramter)
 String *PcommandList[commandnumber];   // pointera array (to each command)
 
@@ -159,10 +164,10 @@ String Srequest;
 uint8_t addrStationLen = sizeof(addrStation);
 uint8_t typeStationLen = sizeof(typeStation);
 int udpPort[nbUdpPort];
-String services[] = {"Route", "Trace"};
+String services[] = {"Route", "Cmde"};
 char packetBuffer[UDP_TX_PACKET_MAX_SIZE]; //buffer to hold incoming packet,
 byte bufUdp[255];
-uint8_t currentSSID = 0x00;         // current used SSID
+uint8_t currentSSID = 0x01;         // current used SSID
 uint8_t retryWifi = 0x00;         //
 char stationId[5];
 
@@ -253,12 +258,35 @@ void setup() {
   udpPort[1] = commandPort; //
   timeRestart = millis();
 
-  ConnectWifi("default", "default");
+  // ConnectWifi("default", "default");
+  if (currentSSID == 0x00)
+  {
+    ConnectWifi("default", "default");
+  }
+  if (currentSSID == 0x01 )
+  {
+    ConnectWifi(ssid1, pass1);
+  }
+  if (currentSSID == 0x02 )
+  {
+    ConnectWifi(ssid2, pass2);
+  }
+#if defined(debugModeOn)
+  Serial.println("set wifi mode ");
+#endif
   WiFi.mode(WIFI_STA);
-
+#if defined(debugModeOn)
+  Serial.println("udp begin ");
+#endif
   Udp.begin(udpListenPort);
+#if defined(debugModeOn)
+  Serial.println("gw udp begin ");
+#endif
   UdpG.begin(gatewayPort);
   delay (5000);
+#if defined(debugModeOn)
+  Serial.println("trace");
+#endif
   TraceToUdp("Ready! Use ", 0x02);
   pinMode(configPin, INPUT_PULLUP);
   digitalWrite(powerLED, 0);
@@ -269,9 +297,11 @@ void setup() {
 }
 
 void loop() {
-
   if (millis() - timeRestart >= 20000 && restartCompleted == false)
   {
+#if defined(debugModeOn)
+    Serial.println("reboot complete");
+#endif
     restartCompleted = true;
     if (CheckCurrentIP())                    // check ip address
     {
@@ -289,7 +319,6 @@ void loop() {
         Serial.print("Not ready to use ! ");
         PrintUdpConfig();
       }
-
     }
     Udp.begin(udpListenPort);
     UdpG.begin(gatewayPort);
@@ -299,23 +328,40 @@ void loop() {
       WiFi.printDiag(Serial);
     }
   }
-  if ((bitRead(diagByte, WifidiagBit) || bitRead(diagByte, IPdiagBit)) &&  millis()  > diagTime + diagTimeCycle &&  retryWifi <= 5)
+  if (((bitRead(diagByte, WifidiagBit) || bitRead(diagByte, IPdiagBit))) &&  millis()  > diagTime + diagTimeCycle &&  retryWifi <= 5)
   {
 #if defined debugModeOn
     Serial.println("request default wifi connection");
 #endif
     diagTime = millis();
-    ConnectWifi("default", "default");
+    //ConnectWifi("default", "default");
+
+    if (currentSSID == 0x00)
+    {
+      ConnectWifi("default", "default");
+    }
+    if (currentSSID == 0x01 )
+    {
+      ConnectWifi(ssid1, pass1);
+    }
+    if (currentSSID == 0x02 )
+    {
+      ConnectWifi(ssid2, pass2);
+    }
     WiFi.mode(WIFI_STA);
   }
-  if (millis() - timeSerial >= 20)
+  if (restartCompleted && millis() - timeSerial >= 20)
   {
     int lenInput = Serial_have_message();
     {
       if (lenInput != 0)
       {
         String   lenS = "serial len:" + String(lenInput);
-        TraceToUdp(lenS, 0x01);
+        //  TraceToUdp(lenS, 0x01);
+#if defined(debugModeOn)
+        Serial.println(lenS);
+        delay(100);
+#endif
         RouteToUdp(lenInput);
       }
     }
@@ -324,6 +370,7 @@ void loop() {
 
   if (millis() - timeCheck >= 30000)
   {
+
     boolean wifiStatus = false;
     if (WiFi.status() == WL_CONNECTED)
     {
@@ -368,8 +415,11 @@ void loop() {
     SendStatus();
     timeUpdateStatus = millis();
   }
-  if (!connectedStatus && (millis() > timeCheckWifi + 180000))
+  if (!connectedStatus && (millis() > timeCheckWifi + 60000))
   {
+#if defined(debugModeOn)
+    Serial.println(":");
+#endif
     retryWifi = 0;
     currentSSID = (currentSSID + 1) % 3;
     Restart();
@@ -478,7 +528,6 @@ boolean CheckCurrentIP()
     bitWrite(diagByte, bitDiagIP, 1);       // position bit diag
     digitalWrite(readyPin, false);
     return false;
-
   }
   else
   {
@@ -487,6 +536,7 @@ boolean CheckCurrentIP()
       Serial.println(currentIP);
     }
     bitWrite(diagByte, bitDiagIP, 0);       // position bit diag
+    digitalWrite(readyPin, true);
     return true;
   }
 }
@@ -587,9 +637,22 @@ int Serial_have_message() {
     digitalWrite(serialLED, 1);
     if (digitalRead(configPin)) // gateway run mode
     {
+#if defined(debugModeOn)
+      Serial.println("run");
+      delay(100);
+#endif
       while (Serial.available())
       {
+#if defined(debugModeOn)
+        Serial.println("S");
+        delay(100);
+#endif
         byte In1 = (Serial.read());
+
+#if defined(debugModeOn)
+        Serial.println(In1, HEX);
+        delay(100);
+#endif
         switch (In1)
         {
           case 0x7f:  // looking for start of frame "0x7f-0x7e-0x7f-0x7e"
@@ -713,10 +776,14 @@ int Serial_have_message() {
           return (0);
         }
       }
+      delay(50);
     }
     else  // gateway configuration mode
     {
       Srequest = (Serial.readString());
+      if (Srequest.length() == 0) {
+        return 0;
+      }
       Serial.println(Srequest);
       commandReturn rc = SerialInput.GetCommand(Srequest); // look for commant inside the input
       int cmdIdx = rc.idxCommand;
@@ -1561,7 +1628,7 @@ void LoadEerpromParamters()
     routePort = numericRC.parameterNumericValue;
   }
 
-  Srequest = "tracePort";
+  Srequest = "commandPort";
 #if defined(debugModeOn)
   Serial.print(Srequest);
   Serial.print(": ");
